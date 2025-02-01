@@ -116,4 +116,4 @@ venv.bak/
 .dmypy.json
 dmypy.json
 .bak
-
+*.mp4

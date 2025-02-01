@@ -32,72 +32,58 @@ from video_vae import CausalVideoVAELossWrapper
 
 def get_transform(width, height, new_width=None, new_height=None, resize=False,):
     transform_list = []
-
     if resize:
-        # rescale according to the largest ratio
-        scale = max(new_width / width, new_height / height)
-        resized_width = round(width * scale)
-        resized_height = round(height * scale)
-        
-        transform_list.append(pth_transforms.Resize((resized_height, resized_width), InterpolationMode.BICUBIC, antialias=True))
-        transform_list.append(pth_transforms.CenterCrop((new_height, new_width)))
-    
+        if new_width is None:
+            new_width = width // 8 * 8
+        if new_height is None:
+            new_height = height // 8 * 8
+        transform_list.append(pth_transforms.Resize((new_height, new_width), InterpolationMode.BICUBIC, antialias=True))
     transform_list.extend([
         pth_transforms.Normalize((0.5, 0.5, 0.5), (0.5, 0.5, 0.5)),
     ])
     transform_list = pth_transforms.Compose(transform_list)
-
     return transform_list
 
-def load_video_and_transform(video_path, frame_indexs, frame_number, new_width=None, new_height=None, resize=False):
-    video_capture = None
-    frame_indexs_set = set(frame_indexs)
-
+def load_video_and_transform(video_path, frame_number, new_width=None, new_height=None, max_frames=600, sample_fps=24, resize=False):
     try:
         video_capture = cv2.VideoCapture(video_path)
+        fps = video_capture.get(cv2.CAP_PROP_FPS)
         frames = []
-        frame_index = 0
         while True:
             flag, frame = video_capture.read()
             if not flag:
                 break
-            if frame_index > frame_indexs[-1]:
+            frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+            frame = torch.from_numpy(frame)
+            frame = frame.permute(2, 0, 1)
+            frames.append(frame)
+            if len(frames) >= max_frames:
                 break
-            if frame_index in frame_indexs_set:
-                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                frame = torch.from_numpy(frame)
-                frame = frame.permute(2, 0, 1)
-                frames.append(frame)
-            frame_index += 1
-
         video_capture.release()
-        
-        if len(frames) == 0:
-            print(f"Empty video {video_path}")
-            return None
-
-        frames = frames[:frame_number]
-        duration = ((len(frames) - 1) // 8) * 8 + 1  # make sure the frames match: f * 8 + 1
-        frames = frames[:duration]
+        interval = max(int(fps / sample_fps), 1)
+        frames = frames[::interval][:frame_number]
         frames = torch.stack(frames).float() / 255
-        video_transform = get_transform(frames.shape[-1], frames.shape[-2], new_width, new_height, resize=resize)
-        frames = video_transform(frames).permute(1, 0, 2, 3)
+        width = frames.shape[-1]
+        height = frames.shape[-2]
+        video_transform = get_transform(width, height, new_width, new_height, resize=resize)
+        frames = video_transform(frames)
+        if resize:
+            if new_width is None:
+                new_width = width // 32 * 32
+            if new_height is None:
+                new_height = height // 32 * 32
         return frames
-
-    except Exception as e:
-        print(f"Loading video: {video_path} exception {e}")
-        if video_capture is not None:
-            video_capture.release()
+    except Exception:
         return None
 
-
 class VideoDataset(Dataset):
-    def __init__(self, anno_file, width, height, num_frames, num_items=-1):
+    def __init__(self, anno_file, width, height, num_frames, num_items=-1, fps=8):
         super().__init__()
         self.annotation = []
         self.width = width
         self.height = height
         self.num_frames = num_frames
+        self.fps = fps
 
         with jsonlines.open(anno_file, 'r') as reader:
             for item in tqdm(reader):
@@ -114,23 +100,22 @@ class VideoDataset(Dataset):
         video_path = video_item['video']
         output_latent_path = video_item['latent']
 
-        # The sampled frame indexs of a video, if not specified, load frames: [0, num_frames)
-        frame_indexs = video_item['frames'] if 'frames' in video_item else list(range(self.num_frames))
-
         try:
             video_frames_tensors = load_video_and_transform(
                 video_path, 
-                frame_indexs, 
+                # frame_indexs, 
                 frame_number=self.num_frames,    # The num_frames to encode
                 new_width=self.width, 
                 new_height=self.height, 
+                sample_fps=self.fps,
                 resize=True
             )
-            
+
             if video_frames_tensors is None:
                 return videos_per_task
 
-            video_frames_tensors = video_frames_tensors.unsqueeze(0)
+            video_frames_tensors = video_frames_tensors.permute(1, 0, 2, 3).unsqueeze(0)
+            # video_frames_tensors = video_frames_tensors.unsqueeze(0)
             videos_per_task.append({'video': video_path, 'input': video_frames_tensors, 'output': output_latent_path})
 
         except Exception as e:
@@ -151,7 +136,6 @@ class VideoDataset(Dataset):
     def __len__(self):
         return len(self.annotation)
 
-
 def get_args():
     parser = argparse.ArgumentParser('Pytorch Multi-process Training script', add_help=False)
     parser.add_argument('--batch_size', default=4, type=int)
@@ -163,6 +147,8 @@ def get_args():
     parser.add_argument('--num_frames', type=int, default=121, help="The frame number to encode")
     parser.add_argument('--save_memory', action='store_true', help="Open the VAE tiling")
     parser.add_argument('--num_items', type=int, default=-1, help="The video height")
+    parser.add_argument('--fps', type=int, default=8, help="The video height")
+
     return parser.parse_args()
 
 def build_model(args):
@@ -183,7 +169,7 @@ def build_data_loader(args):
                 return_batch['output'].append(video_input['output'])
         return return_batch
 
-    dataset = VideoDataset(args.anno_file, args.width, args.height, args.num_frames, args.num_items)
+    dataset = VideoDataset(args.anno_file, args.width, args.height, args.num_frames, args.num_items, args.fps)
     sampler = DistributedSampler(dataset, num_replicas=args.world_size, rank=args.rank, shuffle=False)
     loader = DataLoader(
         dataset, batch_size=args.batch_size, num_workers=6, pin_memory=True, 
@@ -236,6 +222,7 @@ def main():
 
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch_dtype):
                 for video_input, output_path in zip(input_video_list, output_path_list):
+                    print(f"Processing {video_input.shape} to {output_path}")
                     video_latent = model.encode_latent(video_input.to(device), sample=True, window_size=window_size, temporal_chunk=temporal_chunk, tile_sample_min_size=256)
                     video_latent = video_latent.to(torch_dtype).cpu()
                     task_queue.append(executor.submit(save_tensor, video_latent, output_path))
@@ -244,7 +231,6 @@ def main():
             res = future.result()
 
     torch.distributed.barrier()
-
 
 if __name__ == "__main__":
     main()
