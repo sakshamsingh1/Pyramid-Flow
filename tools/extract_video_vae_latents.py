@@ -30,8 +30,6 @@ ImageFile.LOAD_TRUNCATED_IMAGES = True
 from trainer_misc import init_distributed_mode
 from video_vae import CausalVideoVAELossWrapper
 
-
-
 def get_transform(width, height, new_width=None, new_height=None, resize=False,):
     transform_list = []
 
@@ -50,7 +48,6 @@ def get_transform(width, height, new_width=None, new_height=None, resize=False,)
     transform_list = pth_transforms.Compose(transform_list)
 
     return transform_list
-
 
 def load_video_and_transform(video_path, frame_indexs, frame_number, new_width=None, new_height=None, resize=False):
     video_capture = None
@@ -95,7 +92,7 @@ def load_video_and_transform(video_path, frame_indexs, frame_number, new_width=N
 
 
 class VideoDataset(Dataset):
-    def __init__(self, anno_file, width, height, num_frames):
+    def __init__(self, anno_file, width, height, num_frames, num_items=-1):
         super().__init__()
         self.annotation = []
         self.width = width
@@ -105,6 +102,9 @@ class VideoDataset(Dataset):
         with jsonlines.open(anno_file, 'r') as reader:
             for item in tqdm(reader):
                 self.annotation.append(item)
+
+        if num_items > 0:
+            self.annotation = self.annotation[:num_items]        
 
         tot_len = len(self.annotation)
         print(f"Totally {len(self.annotation)} videos")
@@ -162,8 +162,8 @@ def get_args():
     parser.add_argument('--height', type=int, default=384, help="The video height")
     parser.add_argument('--num_frames', type=int, default=121, help="The frame number to encode")
     parser.add_argument('--save_memory', action='store_true', help="Open the VAE tiling")
+    parser.add_argument('--num_items', type=int, default=-1, help="The video height")
     return parser.parse_args()
-
 
 def build_model(args):
     model_path = args.model_path
@@ -183,7 +183,7 @@ def build_data_loader(args):
                 return_batch['output'].append(video_input['output'])
         return return_batch
 
-    dataset = VideoDataset(args.anno_file, args.width, args.height, args.num_frames)
+    dataset = VideoDataset(args.anno_file, args.width, args.height, args.num_frames, args.num_items)
     sampler = DistributedSampler(dataset, num_replicas=args.world_size, rank=args.rank, shuffle=False)
     loader = DataLoader(
         dataset, batch_size=args.batch_size, num_workers=6, pin_memory=True, 
