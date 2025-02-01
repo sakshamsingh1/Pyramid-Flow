@@ -222,7 +222,6 @@ def main():
 
             with torch.no_grad(), torch.cuda.amp.autocast(enabled=True, dtype=torch_dtype):
                 for video_input, output_path in zip(input_video_list, output_path_list):
-                    print(f"Processing {video_input.shape} to {output_path}")
                     video_latent = model.encode_latent(video_input.to(device), sample=True, window_size=window_size, temporal_chunk=temporal_chunk, tile_sample_min_size=256)
                     video_latent = video_latent.to(torch_dtype).cpu()
                     task_queue.append(executor.submit(save_tensor, video_latent, output_path))

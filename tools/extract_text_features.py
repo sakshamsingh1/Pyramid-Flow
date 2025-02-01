@@ -23,7 +23,6 @@ from pyramid_dit import (
     FluxTextEncoderWithMask,
 )
 
-
 def get_args():
     parser = argparse.ArgumentParser('Pytorch Multi-process script', add_help=False)
     parser.add_argument('--batch_size', default=4, type=int)
@@ -31,13 +30,14 @@ def get_args():
     parser.add_argument('--model_dtype', default='bf16', type=str, help="The Model Dtype: bf16 or df16")
     parser.add_argument('--model_name', default='pyramid_flux', type=str, help="The Model Architecture Name", choices=["pyramid_flux", "pyramid_mmdit"])
     parser.add_argument('--model_path', default='', type=str, help='The pre-trained weight path')
+    parser.add_argument('--num_items', type=int, default=-1, help="The video height")
     return parser.parse_args()
 
 
 class VideoTextDataset(Dataset):
-    def __init__(self, anno_file):
+    def __init__(self, anno_file, num_items=-1):
         super().__init__()
-
+        self.num_items = num_items
         self.annotation = []
         with jsonlines.open(anno_file, 'r') as reader:
             for item in tqdm(reader):
@@ -57,8 +57,10 @@ class VideoTextDataset(Dataset):
             return None, None
     
     def __len__(self):
-        return len(self.annotation)
-
+        if self.num_items > 0:
+            return self.num_items
+        else:
+            return len(self.annotation)
 
 def build_data_loader(args):
 
