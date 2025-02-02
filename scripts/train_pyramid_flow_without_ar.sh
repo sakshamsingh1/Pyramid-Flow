@@ -4,20 +4,18 @@
 # Since the design of spatial pyramid and temporal pyramid are decoupled, we can only use the spatial pyramid flow
 # to train with full-sequence diffusion, which is also more effective than the normal flow matching training strategy
 
-
-GPUS=8  # The gpu number
-TASK=t2i   # t2i or t2v
+GPUS=2  # The gpu number
+TASK=t2v   # t2i or t2v
 SHARD_STRATEGY=zero2   # zero2 or zero3
-MODEL_NAME=pyramid_flux     # The model name, `pyramid_flux` or `pyramid_mmdit`
-MODEL_PATH=/PATH/pyramid-flow-miniflux  # The downloaded ckpt dir. IMPORTANT: It should match with model_name, flux or mmdit (sd3)
-VARIANT=diffusion_transformer_image  # The DiT Variant, diffusion_transformer_image or diffusion_transformer_384p
+MODEL_NAME=pyramid_mmdit     # The model name, `pyramid_flux` or `pyramid_mmdit`
+MODEL_PATH=/mnt/sda1/saksham/TI2AV/pyramid  # The downloaded ckpt dir. IMPORTANT: It should match with model_name, flux or mmdit (sd3)
+VARIANT=diffusion_transformer_384p  # The DiT Variant, diffusion_transformer_image or diffusion_transformer_384p
 
-OUTPUT_DIR=/PATH/output_dir    # The checkpoint saving dir
-NUM_FRAMES=8         # e.g., 8 for 2s, 16 for 5s, 32 for 10s
+OUTPUT_DIR=/mnt/sda1/saksham/TI2AV/ckpts    # The checkpoint saving dir
+NUM_FRAMES=3         # e.g., 8 for 2s, 16 for 5s, 32 for 10s
 BATCH_SIZE=4         # It should satisfy batch_size % 4 == 0
-RESOLUTION="768p"    # 384p or 768p
-ANNO_FILE=annotation/image_text.jsonl  # The annotation file path
-
+RESOLUTION="256p"     # 384p 384p or 768p
+ANNO_FILE=/home/sxk230060/TI2AV/Pyramid-Flow/annotation/train.json  # The annotation file path
 
 torchrun --nproc_per_node $GPUS \
     train/train_pyramid_flow.py \
@@ -27,7 +25,6 @@ torchrun --nproc_per_node $GPUS \
     --fsdp_shard_strategy $SHARD_STRATEGY \
     --use_flash_attn \
     --load_text_encoder \
-    --load_vae \
     --model_name $MODEL_NAME \
     --model_path $MODEL_PATH \
     --model_dtype bf16 \
@@ -53,4 +50,6 @@ torchrun --nproc_per_node $GPUS \
     --iters_per_epoch 2000 \
     --report_to tensorboard \
     --print_freq 40 \
-    --save_ckpt_freq 1
+    --save_ckpt_freq 1 \
+    --num_items 100 \
+    --report_to wandb

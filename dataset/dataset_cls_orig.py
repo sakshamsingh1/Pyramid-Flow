@@ -139,7 +139,7 @@ class LengthGroupedVideoTextDataset(Dataset):
                 in advance, since the T5 encoder will cost many GPU memories
     """
     
-    def __init__(self, anno_file, max_frames=16, resolution='384p', load_vae_latent=True, load_text_fea=True, num_items=-1):
+    def __init__(self, anno_file, max_frames=16, resolution='384p', load_vae_latent=True, load_text_fea=True):
         super().__init__()
 
         self.video_annos = []
@@ -147,9 +147,8 @@ class LengthGroupedVideoTextDataset(Dataset):
         self.load_vae_latent = load_vae_latent
         self.load_text_fea = load_text_fea
         self.resolution = resolution
-        self.num_items = num_items
 
-        # assert load_vae_latent, "Now only support loading vae latents, we will support to directly load video frames in the future"
+        assert load_vae_latent, "Now only support loading vae latents, we will support to directly load video frames in the future"
 
         if not isinstance(anno_file, list):
             anno_file = [anno_file]
@@ -162,8 +161,6 @@ class LengthGroupedVideoTextDataset(Dataset):
         print(f"Totally Remained {len(self.video_annos)} videos") 
 
     def __len__(self):
-        if self.num_items > 0:
-            return self.num_items
         return len(self.video_annos)
 
     def __getitem__(self, index):
@@ -174,10 +171,7 @@ class LengthGroupedVideoTextDataset(Dataset):
             latent = torch.load(latent_path, map_location='cpu')  # loading the pre-extracted video latents
 
             # TODO: remove the hard code latent shape checking
-            if self.resolution == '256p':
-                assert latent.shape[-1] == 256 // 8
-                assert latent.shape[-2] == 256 // 8
-            elif self.resolution == '384p':
+            if self.resolution == '384p':
                 assert latent.shape[-1] == 640 // 8
                 assert latent.shape[-2] == 384 // 8
             else:

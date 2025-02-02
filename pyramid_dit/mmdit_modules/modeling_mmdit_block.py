@@ -9,7 +9,10 @@ try:
     from flash_attn import flash_attn_qkvpacked_func, flash_attn_func
     from flash_attn.bert_padding import pad_input, unpad_input, index_first_axis
     from flash_attn.flash_attn_interface import flash_attn_varlen_func
-except:
+except Exception as e:
+    print(f"##################################################")
+    print(f"Error: {e}")
+    print(f"##################################################")
     flash_attn_func = None
     flash_attn_qkvpacked_func = None
     flash_attn_varlen_func = None
@@ -473,7 +476,7 @@ class JointAttention(nn.Module):
         if flash_attn_func is None:
             self.use_flash_attn = False
 
-        # print(f"Using flash-attention: {self.use_flash_attn}")
+
         if self.use_flash_attn:
             if is_sequence_parallel_initialized():
                 self.var_flash_attn = SequenceParallelVarlenFlashSelfAttentionWithT5Mask()
@@ -484,7 +487,6 @@ class JointAttention(nn.Module):
                 self.var_len_attn = SequenceParallelVarlenSelfAttentionWithT5Mask()
             else:
                 self.var_len_attn = VarlenSelfAttentionWithT5Mask()
-    
 
     def forward(
         self,

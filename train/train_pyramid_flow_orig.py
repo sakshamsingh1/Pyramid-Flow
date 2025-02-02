@@ -3,10 +3,13 @@ import sys
 sys.path.append(os.path.abspath('.'))
 import argparse
 import datetime
+import numpy as np
 import time
 import torch
 import logging
 import json
+import math
+import random
 import diffusers
 import transformers
 from pathlib import Path
@@ -103,7 +106,7 @@ def get_args():
 
     # The training manner config
     parser.add_argument('--use_flash_attn', action='store_true')
-    parser.add_argument('--use_temporal_causal', action='store_true', default=False)
+    parser.add_argument('--use_temporal_causal', action='store_true', default=True)
     parser.add_argument('--interp_condition_pos', action='store_true', default=True)
     parser.add_argument('--sync_video_input', action='store_true', help="whether to sync the video input")
     parser.add_argument('--load_text_encoder', action='store_true', help="whether to load the text encoder during training")
@@ -122,7 +125,7 @@ def get_args():
 
     # Dataset Cconfig
     parser.add_argument('--anno_file', default='', type=str, help="The annotation jsonl file")
-    parser.add_argument('--resolution', default='384p', type=str, help="The input resolution", choices=['256p', '384p', '768p'])
+    parser.add_argument('--resolution', default='384p', type=str, help="The input resolution", choices=['384p', '768p'])
 
     # Training set config
     parser.add_argument('--dit_pretrained_weight', default='', type=str, help='The pretrained dit checkpoint')  
@@ -205,7 +208,6 @@ def get_args():
     parser.add_argument('--local_rank', default=-1, type=int)
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training', type=str)
-    parser.add_argument('--num_items', default=-1, type=int)
 
     return parser.parse_args()
 
@@ -351,8 +353,6 @@ def main(args):
 
     device = accelerator.device
 
-############################################# RUN SETUP #########################################################################
-
     # building model
     runner = build_model_runner(args)
 
@@ -416,7 +416,6 @@ def main(args):
             resolution=args.resolution,
             load_vae_latent=not args.load_vae,
             load_text_fea=not args.load_text_encoder,
-            num_items=args.num_items,
         )
 
         if args.sync_video_input:
