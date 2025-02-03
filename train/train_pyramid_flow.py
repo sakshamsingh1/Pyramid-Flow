@@ -14,9 +14,7 @@ from packaging import version
 from copy import deepcopy
 
 from dataset import (
-    ImageTextDataset,
     LengthGroupedVideoTextDataset,
-    create_image_text_dataloaders,
     create_length_grouped_video_text_dataloader
 )
 
@@ -37,27 +35,19 @@ from trainer_misc import (
 )
 
 from trainer_misc import (
-    is_sequence_parallel_initialized,
     init_sequence_parallel_group,
-    get_sequence_parallel_proc_num,
-    init_sync_input_group,
-    get_sync_input_group,
 )
 
 from collections import OrderedDict
 
-from PIL import Image
 from PIL import ImageFile
 ImageFile.LOAD_TRUNCATED_IMAGES = True
 
 from torch.distributed.fsdp.fully_sharded_data_parallel import (
     FullOptimStateDictConfig, 
     FullStateDictConfig,
-    ShardedOptimStateDictConfig,
-    ShardedStateDictConfig,
     ShardingStrategy,
     BackwardPrefetch,
-    MixedPrecision,
     CPUOffload,
     StateDictType,
 )
@@ -68,12 +58,11 @@ from transformers.models.t5.modeling_t5 import T5Block
 
 import accelerate
 from accelerate import Accelerator
-from accelerate.utils import DistributedType, ProjectConfiguration, set_seed
+from accelerate.utils import ProjectConfiguration, set_seed
 from accelerate import FullyShardedDataParallelPlugin
 from diffusers.utils import is_wandb_available
 from accelerate.logging import get_logger
-from accelerate.state import AcceleratorState
-from diffusers.optimization import get_scheduler
+from diffusers.utils import export_to_video
 
 logger = get_logger(__name__)
 
@@ -188,7 +177,7 @@ def get_args():
     parser.add_argument('--seed', default=0, type=int)
     parser.add_argument('--resume', default='', help='resume from checkpoint')
     parser.add_argument('--auto_resume', action='store_true')
-    parser.set_defaults(auto_resume=True)
+    # parser.set_defaults(auto_resume=True)
     parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
                         help='start epoch')
     parser.add_argument('--global_step', default=0, type=int, metavar='N', help='The global optimization step')
@@ -206,6 +195,7 @@ def get_args():
     parser.add_argument('--dist_on_itp', action='store_true')
     parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training', type=str)
     parser.add_argument('--num_items', default=-1, type=int)
+    parser.add_argument('--load_vae_latent', action='store_true', help="whether to load the video vae during training")
 
     return parser.parse_args()
 
@@ -242,6 +232,7 @@ def build_model_runner(args):
         corrupt_ratio=args.corrupt_ratio,
         interp_condition_pos=args.interp_condition_pos,
         video_sync_group=args.video_sync_group,
+        load_vae_latent=args.load_vae_latent
     )
     
     if args.dit_pretrained_weight:
@@ -293,6 +284,21 @@ def build_fsdp_plugin(args):
     )
     return fsdp_plugin
 
+def gen_t2v(model, prompt='playing violin fiddle', save_path='./t2v_sample.mp4', height=256, width=256, temp=3, model_dtype='bf16', torch_dtype=torch.bfloat16):
+    with torch.no_grad(), torch.cuda.amp.autocast(enabled=True if model_dtype != 'fp32' else False, dtype=torch_dtype):
+        frames = model.generate(
+            prompt=prompt,
+            num_inference_steps=[20, 20, 20],
+            video_num_inference_steps=[10, 10, 10],
+            height=height,
+            width=width,
+            temp=temp,
+            guidance_scale=7.0,         # The guidance for the first frame, set it to 7 for 384p variant
+            video_guidance_scale=5.0,   # The guidance for the other video latent
+            output_type="pil",
+            save_memory=True,           # If you have enough GPU memory, set it to `False` to improve vae decoding speed
+        )
+    export_to_video(frames, save_path, fps=8)
 
 def main(args):
     logging_dir = Path(args.output_dir, args.logging_dir)
@@ -378,72 +384,41 @@ def main(args):
     global_rank = accelerator.process_index
     anno_file = args.anno_file
 
-    if args.task == 't2i':
-        # For image generation training
-        if args.resolution == '384p':
-            image_ratios = [1/1, 3/5, 5/3]
-            image_sizes = [(512, 512), (384, 640), (640, 384)]
-        else:
-            assert args.resolution == '768p'
-            image_ratios = [1/1, 3/5, 5/3]
-            image_sizes = [(1024, 1024), (768, 1280), (1280, 768)]
+    # For video generation training
+    video_text_dataset = LengthGroupedVideoTextDataset(
+        anno_file, 
+        max_frames=args.max_frames,
+        resolution=args.resolution,
+        load_vae_latent=args.load_vae_latent,
+        load_text_fea=not args.load_text_encoder,
+        num_items=args.num_items,
+    )
 
-        image_text_dataset = ImageTextDataset(
-            anno_file, 
-            add_normalize=not args.not_add_normalize,
-            ratios=image_ratios, 
-            sizes=image_sizes,  
-        )
+    if args.sync_video_input:
+        assert args.sp_proc_num % args.video_sync_group == 0, "The video_sync_group should be divided by world size"
+        assert args.max_frames % args.video_sync_group == 0, "The video_sync_group should be divided by num_frames"
 
-        train_dataloader = create_image_text_dataloaders(
-            image_text_dataset,
+        train_dataloader = create_length_grouped_video_text_dataloader(
+            video_text_dataset, 
             batch_size=args.batch_size,
             num_workers=args.num_workers,
-            multi_aspect_ratio=True,
-            epoch=args.seed,
-            sizes=image_sizes,
-            use_distributed=True,
-            world_size=accelerator.num_processes,
-            rank=global_rank,
-        )
-
-    else:
-        assert args.task == 't2v'
-        # For video generation training
-        video_text_dataset = LengthGroupedVideoTextDataset(
-            anno_file, 
             max_frames=args.max_frames,
-            resolution=args.resolution,
-            load_vae_latent=not args.load_vae,
-            load_text_fea=not args.load_text_encoder,
-            num_items=args.num_items,
+            world_size=args.sp_proc_num // args.video_sync_group,
+            rank=global_rank // args.video_sync_group,
+            epoch=args.seed,
+            use_distributed=True,
         )
-
-        if args.sync_video_input:
-            assert args.sp_proc_num % args.video_sync_group == 0, "The video_sync_group should be divided by world size"
-            assert args.max_frames % args.video_sync_group == 0, "The video_sync_group should be divided by num_frames"
-
-            train_dataloader = create_length_grouped_video_text_dataloader(
-                video_text_dataset, 
-                batch_size=args.batch_size,
-                num_workers=args.num_workers,
-                max_frames=args.max_frames,
-                world_size=args.sp_proc_num // args.video_sync_group,
-                rank=global_rank // args.video_sync_group,
-                epoch=args.seed,
-                use_distributed=True,
-            )
-        else:
-            train_dataloader = create_length_grouped_video_text_dataloader(
-                video_text_dataset, 
-                batch_size=args.batch_size,
-                num_workers=args.num_workers,
-                max_frames=args.max_frames,
-                world_size=args.sp_proc_num,
-                rank=global_rank,
-                epoch=args.seed,
-                use_distributed=True,
-            )
+    else:
+        train_dataloader = create_length_grouped_video_text_dataloader(
+            video_text_dataset, 
+            batch_size=args.batch_size,
+            num_workers=args.num_workers,
+            max_frames=args.max_frames,
+            world_size=args.sp_proc_num,
+            rank=global_rank,
+            epoch=args.seed,
+            use_distributed=True,
+        )
 
     accelerator.wait_for_everyone()
     logger.info("Building dataset finished")
@@ -559,9 +534,18 @@ def main(args):
 
     # Start Train!
     start_time = time.time()
+
     accelerator.wait_for_everyone()
 
+    # if accelerator.sync_gradients and accelerator.is_main_process:
+    #     sample_path = os.path.join(args.output_dir, "sample_0.mp4")
+    #     with torch.no_grad():
+    #         gen_t2v(runner, save_path=sample_path)
+    #     if args.report_to == "wandb":
+    #         wandb.log({"video": wandb.Video(sample_path, fps=8)}, step=0)
+
     for epoch in range(first_epoch, args.epochs):
+
         train_stats = train_one_epoch_with_fsdp(
             runner, 
             model_ema,
@@ -588,8 +572,16 @@ def main(args):
                     save_path = os.path.join(args.output_dir, f"checkpoint-{global_step}")
                     accelerator.save_state(save_path, safe_serialization=False)
                     logger.info(f"Saved state to {save_path}")
+                    
+                    accelerator.wait_for_everyone()
 
-            accelerator.wait_for_everyone()
+                    # inference and save the video
+                    if accelerator.is_main_process:
+                        # steps: 1. generate and save video 2. upload to wandb
+                        sample_path = os.path.join(save_path, f"sample_{epoch}.mp4")
+                        gen_t2v(runner, save_path=sample_path)
+                        if args.report_to == "wandb":
+                            wandb.log({"video": wandb.Video(sample_path, fps=8)}, step=global_step)            
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
                     'epoch': epoch, 'n_parameters': n_learnable_parameters}

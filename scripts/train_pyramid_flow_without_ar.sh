@@ -11,7 +11,7 @@ MODEL_NAME=pyramid_mmdit     # The model name, `pyramid_flux` or `pyramid_mmdit`
 MODEL_PATH=/mnt/sda1/saksham/TI2AV/pyramid  # The downloaded ckpt dir. IMPORTANT: It should match with model_name, flux or mmdit (sd3)
 VARIANT=diffusion_transformer_384p  # The DiT Variant, diffusion_transformer_image or diffusion_transformer_384p
 
-OUTPUT_DIR=/mnt/sda1/saksham/TI2AV/ckpts    # The checkpoint saving dir
+OUTPUT_DIR=/mnt/sda1/saksham/TI2AV/ckpts-pyramid-full   # The checkpoint saving dir
 NUM_FRAMES=3         # e.g., 8 for 2s, 16 for 5s, 32 for 10s
 BATCH_SIZE=4         # It should satisfy batch_size % 4 == 0
 RESOLUTION="256p"     # 384p 384p or 768p
@@ -48,8 +48,8 @@ torchrun --nproc_per_node $GPUS \
     --warmup_steps 1000 \
     --epochs 20 \
     --iters_per_epoch 2000 \
-    --report_to tensorboard \
+    --report_to wandb \
     --print_freq 40 \
     --save_ckpt_freq 1 \
-    --num_items 100 \
-    --report_to wandb
+    --load_vae \
+    --load_vae_latent

@@ -15,5 +15,4 @@ torchrun --nproc_per_node $GPUS \
     --model_dtype bf16 \
     --model_name $MODEL_NAME \
     --model_path $MODEL_PATH \
-    --anno_file $ANNO_FILE \
-    --num_items 100
+    --anno_file $ANNO_FILE

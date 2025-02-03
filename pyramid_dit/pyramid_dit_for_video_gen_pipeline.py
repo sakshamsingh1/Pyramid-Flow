@@ -120,7 +120,7 @@ class PyramidDiTForVideoGeneration:
         return_log=True, model_variant="diffusion_transformer_768p", timestep_shift=1.0, stage_range=[0, 1/3, 2/3, 1],
         sample_ratios=[1, 1, 1], scheduler_gamma=1/3, use_mixed_training=False, use_flash_attn=False, 
         load_text_encoder=True, load_vae=True, max_temporal_length=31, frame_per_unit=1, use_temporal_causal=True, 
-        corrupt_ratio=1/3, interp_condition_pos=True, stages=[1, 2, 4], video_sync_group=8, gradient_checkpointing_ratio=0.6, **kwargs,
+        corrupt_ratio=1/3, interp_condition_pos=True, stages=[1, 2, 4], video_sync_group=8, gradient_checkpointing_ratio=0.6, load_vae_latent=True, **kwargs,
     ):
         super().__init__()
 
@@ -134,6 +134,7 @@ class PyramidDiTForVideoGeneration:
         self.stages = stages
         self.sample_ratios = sample_ratios
         self.corrupt_ratio = corrupt_ratio
+        self.load_vae_latent = load_vae_latent
 
         dit_path = os.path.join(model_path, model_variant)
 
@@ -571,7 +572,7 @@ class PyramidDiTForVideoGeneration:
 
     @torch.no_grad()
     def get_vae_latent(self, video, use_temporal_pyramid=True):
-        if self.load_vae:
+        if self.load_vae and not self.load_vae_latent:
             assert video.shape[1] == 3, "The vae is loaded, the input should be raw pixels"
             video = self.vae.encode(video).latent_dist.sample() # [b c t h w]
 

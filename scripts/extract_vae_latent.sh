@@ -21,5 +21,4 @@ torchrun --nproc_per_node $GPUS \
     --width $WIDTH \
     --height $HEIGHT \
     --num_frames $NUM_FRAMES \
-    --num_items 100 \
     --fps $FPS
