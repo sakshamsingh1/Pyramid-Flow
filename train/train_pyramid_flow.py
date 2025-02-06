@@ -579,7 +579,8 @@ def main(args):
                     if accelerator.is_main_process:
                         # steps: 1. generate and save video 2. upload to wandb
                         sample_path = os.path.join(save_path, f"sample_{epoch}.mp4")
-                        gen_t2v(runner, save_path=sample_path)
+                        PROMPT = "A man with light brown hair, dressed in a dark turtleneck and black pants, is seen playing a cello with intense concentration. He is seated, with his right hand skillfully navigating the strings and his left hand supporting the bow. An orchestra, including musicians with violins and a double bass, is visible in the background, indicating a live performance. The warm stage lighting enhances the mood of the event. Over time, the man's attire is described as a grey turtleneck and black pants, and the setting is revealed to be an outdoor concert with a microphone stand and a bare tree structure."
+                        gen_t2v(runner, save_path=sample_path, prompt=PROMPT)
                         if args.report_to == "wandb":
                             wandb.log({"video": wandb.Video(sample_path, fps=8)}, step=global_step)            
 

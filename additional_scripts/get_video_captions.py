@@ -103,7 +103,6 @@ def predict(prompt, video_data, temperature):
         response = tokenizer.decode(outputs[0], skip_special_tokens=True)
         return response
 
-
 def test():
     video_dir = '/mnt/sda1/saksham/TI2AV/AVSync15/videos'
     save_path = '/mnt/sda1/saksham/TI2AV/AVSync15/cog_train_caption.json'

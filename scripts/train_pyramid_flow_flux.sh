@@ -7,10 +7,15 @@
 GPUS=2  # The gpu number
 SHARD_STRATEGY=zero2   # zero2 or zero3
 VIDEO_SYNC_GROUP=4     # values in [4, 8, 16] The number of process that accepts the same input video, used for temporal pyramid AR training.
-MODEL_NAME=pyramid_mmdit     # The model name, `pyramid_flux` or `pyramid_mmdit`
-MODEL_PATH=/mnt/sda1/saksham/TI2AV/pyramid  # The downloaded ckpt dir. IMPORTANT: It should match with model_name, flux or mmdit (sd3)
+MODEL_NAME=pyramid_flux     # The model name, `pyramid_flux` or `pyramid_mmdit`
+MODEL_PATH=/mnt/sda1/saksham/TI2AV/pyramid_flux/  # The downloaded ckpt dir. IMPORTANT: It should match with model_name, flux or mmdit (sd3)
 VARIANT=diffusion_transformer_384p  # The DiT Variant
-OUTPUT_DIR=/mnt/sda1/saksham/TI2AV/ckpts-pyramid-temp-ar   # The checkpoint saving dir
+OUTPUT_DIR=/mnt/sda1/saksham/TI2AV/ckpts-pyramid-flux-ar  # The checkpoint saving dir
+
+if [ -d "$OUTPUT_DIR" ]; then
+    echo "Removing existing directory: $OUTPUT_DIR"
+    rm -rf "$OUTPUT_DIR"
+fi
 
 BATCH_SIZE=4    # It should satisfy batch_size % 4 == 0
 GRAD_ACCU_STEPS=2
@@ -20,7 +25,7 @@ ANNO_FILE=/home/sxk230060/TI2AV/Pyramid-Flow/annotation/train.json  # The video 
 
 # For the 768p version, make sure to add the args:  --gradient_checkpointing
 
-CUDA_VISIBLE_DEVICES=0,2 torchrun --nproc_per_node $GPUS \
+CUDA_VISIBLE_DEVICES=0,1 torchrun --nproc_per_node $GPUS \
     train/train_pyramid_flow.py \
     --num_workers 8 \
     --task t2v \
@@ -53,11 +58,11 @@ CUDA_VISIBLE_DEVICES=0,2 torchrun --nproc_per_node $GPUS \
     --clip_grad 1.0 \
     --lr 5e-5 \
     --warmup_steps 1000 \
-    --epochs 20 \
+    --epochs 40 \
     --iters_per_epoch 2000 \
     --report_to wandb \
     --print_freq 40 \
-    --save_ckpt_freq 1 \
+    --save_ckpt_freq 2 \
     --load_vae \
     --load_vae_latent \
     --sp_proc_num 16
